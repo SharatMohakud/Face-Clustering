@@ -1,5 +1,6 @@
 from tkinter import Tk, Button, Label
 from tkinter import ttk
+import threading
 from tkinter.filedialog import askdirectory
 import os
 
@@ -24,73 +25,81 @@ def select_folder():
 
 
 def start_clustering():
-
     if not selected_folder:
-
         folder_label.config(
             text="Please select a folder first!"
         )
-
         return
 
-    import shutil
+    # disable UI while processing
+    start_button.config(state="disabled")
+    select_button.config(state="disabled")
 
-    from extract_faces import extract_faces
-    from generate_embeddings import generate_embeddings
-    from cluster_faces import cluster_faces
-    from organize_faces import organize_faces
+    progress.config(maximum=100)
+    progress.config(value=0)
 
-    folder_label.config(
-        text="Extracting faces..."
-    )
+    def worker():
+        import shutil
 
-    window.update()
+        from extract_faces import extract_faces
+        from generate_embeddings import generate_embeddings
+        from cluster_faces import cluster_faces
+        from organize_faces import organize_faces
 
-    if os.path.exists("faces"):
-        shutil.rmtree("faces")
+        def ui_set_label(text):
+            window.after(0, lambda: folder_label.config(text=text))
 
-    if os.path.exists("clustered_faces"):
-        shutil.rmtree("clustered_faces")
+        def ui_set_progress(val):
+            window.after(0, lambda: progress.config(value=val))
 
-    os.makedirs("faces")
+        def ui_enable():
+            window.after(0, lambda: start_button.config(state="normal"))
+            window.after(0, lambda: select_button.config(state="normal"))
 
-    extract_faces(selected_folder)
+        ui_set_label("Extracting faces...")
+        ui_set_progress(5)
 
-    folder_label.config(
-        text="Generating embeddings..."
-    )
+        if os.path.exists("faces"):
+            try:
+                shutil.rmtree("faces")
+            except Exception:
+                pass
 
-    window.update()
+        if os.path.exists("clustered_faces"):
+            try:
+                shutil.rmtree("clustered_faces")
+            except Exception:
+                pass
 
-    embeddings, valid_files = generate_embeddings()
+        os.makedirs("faces", exist_ok=True)
 
-    if len(embeddings) == 0:
+        extract_faces(selected_folder)
+        ui_set_progress(35)
 
-        folder_label.config(
-            text="No valid faces found!"
-        )
+        ui_set_label("Generating embeddings...")
+        embeddings, valid_files = generate_embeddings()
 
-        return
+        if len(embeddings) == 0:
+            ui_set_label("No valid faces found!")
+            ui_set_progress(0)
+            ui_enable()
+            return
 
-    folder_label.config(
-        text="Clustering faces..."
-    )
+        ui_set_progress(65)
 
-    window.update()
+        ui_set_label("Clustering faces...")
+        labels = cluster_faces(embeddings, valid_files)
 
-    labels = cluster_faces(
-        embeddings,
-        valid_files
-    )
+        ui_set_progress(85)
 
-    organize_faces(
-        valid_files,
-        labels
-    )
+        organize_faces(valid_files, labels)
 
-    folder_label.config(
-        text="Finished!\nResults saved in clustered_faces"
-    )
+        ui_set_progress(100)
+        ui_set_label("Finished!\nResults saved in clustered_faces")
+        ui_enable()
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
 
 
 def open_results():
